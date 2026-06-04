@@ -10,7 +10,7 @@
   <a href="https://ideogram.ai/blog/ideogram-4.0/" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/Blog-Post-orange" alt="Blog Post"></a>
   <a href="https://github.com/ideogram-oss/ideogram4" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/Code-GitHub-181717?logo=github" alt="Code"></a>
   <a href="https://huggingface.co/collections/ideogram-ai/ideogram-4" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/Model-HuggingFace-blue?logo=huggingface" alt="Model"></a>
-  <a href="https://ideogram.ai/api/learn/" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/API-developer.ideogram.ai-purple" alt="API"></a>
+  <a href="https://developer.ideogram.ai/" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/API-developer.ideogram.ai-purple" alt="API"></a>
   <a href="https://ideogram.ai/" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/Official%20Site-ideogram.ai-ff69b4" alt="Official Site"></a>
 </p>
 
@@ -179,7 +179,7 @@ The plain `--prompt` is rewritten into the structured JSON caption the model
 expects by a "magic prompt" LLM. By default this uses Ideogram's hosted
 magic-prompt API, which is **free** and does the expansion server-side (no local
 model or system prompt needed). It reads `IDEOGRAM_API_KEY` — get a key at
-https://ideogram.ai/api/learn/:
+https://developer.ideogram.ai/:
 
 ```bash
 python run_inference.py \
