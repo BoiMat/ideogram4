@@ -98,14 +98,12 @@ def main() -> None:
   )
   parser.add_argument(
     "--magic-prompt-key",
-    default=os.environ.get("MAGIC_PROMPT_API_KEY")
-    or os.environ.get("IDEOGRAM_API_KEY"),
+    default=None,
     help=(
-      "API key for the magic-prompt model (or set MAGIC_PROMPT_API_KEY). "
-      "Required unless --no-magic-prompt. The claude-* configurations call "
-      "OpenRouter (get a key at https://openrouter.ai); the ideogram-4-v1 "
-      "configuration calls Ideogram's free hosted magic-prompt API and reads "
-      "IDEOGRAM_API_KEY by default."
+      "API key for the magic-prompt model. Required unless --no-magic-prompt. "
+      "By default, nim-* uses NVIDIA_API_KEY, gpustack-* uses "
+      "GPUSTACK_API_KEY, ideogram-4-v1 uses IDEOGRAM_API_KEY, and "
+      "OpenRouter-backed models use MAGIC_PROMPT_API_KEY or OPENROUTER_API_KEY."
     ),
   )
   parser.add_argument(
@@ -141,6 +139,24 @@ def main() -> None:
     ),
   )
   args = parser.parse_args()
+
+  if not args.magic_prompt_key:
+    if args.magic_prompt_model.startswith("nim-"):
+      args.magic_prompt_key = os.environ.get("NVIDIA_API_KEY") or os.environ.get(
+        "MAGIC_PROMPT_API_KEY"
+      )
+    elif args.magic_prompt_model.startswith("gpustack-"):
+      args.magic_prompt_key = os.environ.get("GPUSTACK_API_KEY") or os.environ.get(
+        "MAGIC_PROMPT_API_KEY"
+      )
+    elif args.magic_prompt_model == "ideogram-4-v1":
+      args.magic_prompt_key = os.environ.get("IDEOGRAM_API_KEY") or os.environ.get(
+        "MAGIC_PROMPT_API_KEY"
+      )
+    else:
+      args.magic_prompt_key = os.environ.get("MAGIC_PROMPT_API_KEY") or os.environ.get(
+        "OPENROUTER_API_KEY"
+      )
 
   if args.hive_text_key:
     flags = moderate_prompt(args.prompt, args.hive_text_key)

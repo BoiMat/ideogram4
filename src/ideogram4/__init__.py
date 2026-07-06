@@ -12,7 +12,9 @@ from ideogram4.magic_prompt import (
   MAGIC_PROMPTS,
   ClaudeOpusMagicPromptV1,
   ClaudeSonnetMagicPromptV1,
+  GpuStackMiniMaxM27MagicPromptV1,
   MagicPrompt,
+  NvidiaNimMiniMaxM3MagicPromptV1,
   aspect_ratio_from_size,
 )
 from ideogram4.pipeline_ideogram4 import (
@@ -27,6 +29,7 @@ __all__ = [
   "DEFAULT_MAGIC_PROMPT",
   "ClaudeOpusMagicPromptV1",
   "ClaudeSonnetMagicPromptV1",
+  "GpuStackMiniMaxM27MagicPromptV1",
   "Ideogram4Attention",
   "Ideogram4Config",
   "Ideogram4EmbedScalar",
@@ -38,6 +41,7 @@ __all__ = [
   "Ideogram4TransformerBlock",
   "MAGIC_PROMPTS",
   "MagicPrompt",
+  "NvidiaNimMiniMaxM3MagicPromptV1",
   "PRESETS",
   "SamplerParameters",
   "aspect_ratio_from_size",

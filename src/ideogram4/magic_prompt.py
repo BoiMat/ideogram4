@@ -17,6 +17,10 @@ SYSTEM_PROMPT_DIR = Path(__file__).resolve().parent / "magic_prompt_system_promp
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
+NVIDIA_NIM_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+
+GPUSTACK_URL = "https://gpustack.unibe.ch/v1/chat/completions"
+
 IDEOGRAM_MAGIC_PROMPT_URL = "https://api.ideogram.ai/v1/ideogram-v4/magic-prompt"
 
 
@@ -115,6 +119,62 @@ def _strip_code_fences(text: str) -> str:
   return "\n".join(lines).strip()
 
 
+def openai_compatible_chat(
+  url: str,
+  provider_name: str,
+  model: str,
+  messages: list[dict],
+  api_key: str | None,
+  *,
+  temperature: float | None = 1.0,
+  max_tokens: int = 16384,
+  extra_body: dict | None = None,
+  timeout: float = 120.0,
+) -> str:
+  """Run one OpenAI-compatible chat completion and return its text content.
+
+  ``extra_body`` is merged into the request for provider-specific knobs. The
+  returned text has markdown code fences stripped.
+  """
+  if not api_key:
+    raise RuntimeError(
+      f"No API key for {provider_name}. Set MAGIC_PROMPT_API_KEY or pass api_key=..."
+    )
+
+  body = {"model": model, "messages": messages, "max_tokens": max_tokens, "stream": False}
+  if temperature is not None:
+    body["temperature"] = temperature
+  if extra_body:
+    body.update(extra_body)
+
+  resp = requests.post(
+    url,
+    headers={
+      "Authorization": f"Bearer {api_key}",
+      "Content-Type": "application/json",
+    },
+    json=body,
+    timeout=timeout,
+  )
+  try:
+    resp.raise_for_status()
+  except requests.HTTPError as exc:
+    detail = _preview_text(resp.text)
+    raise RuntimeError(
+      f"{provider_name} request failed with HTTP {resp.status_code} for "
+      f"model {model!r} at {url}: {detail}"
+    ) from exc
+  data = resp.json()
+
+  choices = data.get("choices")
+  if not choices:
+    raise RuntimeError(f"{provider_name} returned no choices: {data}")
+  content = choices[0].get("message", {}).get("content")
+  if not content:
+    raise RuntimeError(f"{provider_name} returned an empty message: {choices[0]}")
+  return _strip_code_fences(content)
+
+
 def openrouter_chat(
   model: str,
   messages: list[dict],
@@ -125,40 +185,66 @@ def openrouter_chat(
   extra_body: dict | None = None,
   timeout: float = 120.0,
 ) -> str:
-  """Run one chat completion through OpenRouter and return its text content.
-
-  OpenRouter's API is OpenAI-compatible, so ``model`` is an OpenRouter slug
-  (https://openrouter.ai/models). ``extra_body`` is merged into the request for
-  provider-specific knobs. The returned text has markdown code fences stripped.
-  """
-  if not api_key:
-    raise RuntimeError("No API key. Set MAGIC_PROMPT_API_KEY or pass api_key=...")
-
-  body = {"model": model, "messages": messages, "max_tokens": max_tokens}
-  if temperature is not None:
-    body["temperature"] = temperature
-  if extra_body:
-    body.update(extra_body)
-
-  resp = requests.post(
+  """Run one chat completion through OpenRouter and return its text content."""
+  return openai_compatible_chat(
     OPENROUTER_URL,
-    headers={
-      "Authorization": f"Bearer {api_key}",
-      "Content-Type": "application/json",
-    },
-    json=body,
+    "OpenRouter",
+    model,
+    messages,
+    api_key,
+    temperature=temperature,
+    max_tokens=max_tokens,
+    extra_body=extra_body,
     timeout=timeout,
   )
-  resp.raise_for_status()
-  data = resp.json()
 
-  choices = data.get("choices")
-  if not choices:
-    raise RuntimeError(f"OpenRouter returned no choices: {data}")
-  content = choices[0].get("message", {}).get("content")
-  if not content:
-    raise RuntimeError(f"OpenRouter returned an empty message: {choices[0]}")
-  return _strip_code_fences(content)
+
+def nvidia_nim_chat(
+  model: str,
+  messages: list[dict],
+  api_key: str | None,
+  *,
+  temperature: float | None = 0.2,
+  max_tokens: int = 16384,
+  extra_body: dict | None = None,
+  timeout: float = 120.0,
+) -> str:
+  """Run one chat completion through NVIDIA NIM and return its text content."""
+  return openai_compatible_chat(
+    NVIDIA_NIM_URL,
+    "NVIDIA NIM",
+    model,
+    messages,
+    api_key,
+    temperature=temperature,
+    max_tokens=max_tokens,
+    extra_body=extra_body,
+    timeout=timeout,
+  )
+
+
+def gpustack_chat(
+  model: str,
+  messages: list[dict],
+  api_key: str | None,
+  *,
+  temperature: float | None = 1.0,
+  max_tokens: int = 50000,
+  extra_body: dict | None = None,
+  timeout: float = 120.0,
+) -> str:
+  """Run one chat completion through GPUStack and return its text content."""
+  return openai_compatible_chat(
+    GPUSTACK_URL,
+    "GPUStack",
+    model,
+    messages,
+    api_key,
+    temperature=temperature,
+    max_tokens=max_tokens,
+    extra_body=extra_body,
+    timeout=timeout,
+  )
 
 
 def _to_ideogram_aspect_ratio(aspect_ratio: str) -> str:
@@ -253,8 +339,82 @@ def ideogram_magic_prompt(
   return json.dumps(json_prompt, ensure_ascii=False, separators=(",", ":"))
 
 
+def _preview_text(text: str, *, limit: int = 600) -> str:
+  suffix = "..." if len(text) > limit else ""
+  return text[:limit].replace("\n", "\\n") + suffix
+
+
+def parse_caption_json(caption: str) -> dict:
+  """Parse a model caption, tolerating prose before/after the JSON object."""
+  caption = _strip_code_fences(caption)
+  try:
+    data = json.loads(caption)
+  except json.JSONDecodeError as direct_error:
+    if caption.lstrip().startswith("{"):
+      raise RuntimeError(
+        "Magic prompt returned malformed JSON: "
+        f"{direct_error}. Response starts with: {_preview_text(caption)}"
+      ) from direct_error
+  else:
+    if not isinstance(data, dict):
+      raise RuntimeError(f"Magic prompt returned JSON that is not an object: {data}")
+    return data
+
+  decoder = json.JSONDecoder()
+  fallback: dict | None = None
+  for index, char in enumerate(caption):
+    if char != "{":
+      continue
+    try:
+      data, _ = decoder.raw_decode(caption[index:])
+    except json.JSONDecodeError:
+      continue
+    if not isinstance(data, dict):
+      continue
+    if any(
+      key in data
+      for key in (
+        "aspect_ratio",
+        "high_level_description",
+        "compositional_deconstruction",
+      )
+    ):
+      return data
+    if fallback is None:
+      fallback = data
+
+  if fallback is not None:
+    return fallback
+
+  raise RuntimeError(
+    "Magic prompt did not return a JSON object. Response starts with: "
+    f"{_preview_text(caption)}"
+  )
+
+
+def normalize_caption_schema(data: dict) -> dict:
+  """Repair common LLM schema slips while preserving caption content."""
+  cd = data.get("compositional_deconstruction")
+  if not isinstance(cd, dict):
+    return data
+  elements = cd.get("elements")
+  if not isinstance(elements, list):
+    return data
+  for element in elements:
+    if not isinstance(element, dict):
+      continue
+    element_type = element.get("type")
+    if element_type in CaptionVerifier.element_types:
+      continue
+    if "text" in element:
+      element["type"] = "text"
+    elif "desc" in element:
+      element["type"] = "obj"
+  return data
+
+
 def strip_aspect_ratio_and_bboxes(caption: str, *, strip_bboxes: bool = True) -> str:
-  data = json.loads(caption)
+  data = normalize_caption_schema(parse_caption_json(caption))
   data.pop("aspect_ratio", None)
   if strip_bboxes:
     elements = data.get("compositional_deconstruction", {}).get("elements", [])
@@ -323,6 +483,95 @@ class ClaudeOpusMagicPromptV1(MagicPrompt):
     return strip_aspect_ratio_and_bboxes(caption, strip_bboxes=self.strip_bboxes)
 
 
+class Nemotron3UltraMagicPromptV1(MagicPrompt):
+  """Magic prompt v1 on Nemotron 3 Ultra, via OpenRouter."""
+
+  def __init__(
+    self,
+    api_key: str | None = None,
+    *,
+    timeout: float = 120.0,
+    strip_bboxes: bool = True,
+  ) -> None:
+    self.api_key = api_key
+    self.timeout = timeout
+    self.strip_bboxes = strip_bboxes
+
+  def expand(self, prompt: str, aspect_ratio: str = "1:1") -> str:
+    messages = build_messages("v1.txt", prompt, aspect_ratio)
+    caption = openrouter_chat(
+      "nvidia/nemotron-3-ultra-550b-a55b:free",
+      messages,
+      self.api_key,
+      temperature=1.0,
+      extra_body={"reasoning": {"enabled": False}},
+      timeout=self.timeout,
+    )
+    return strip_aspect_ratio_and_bboxes(caption, strip_bboxes=self.strip_bboxes)
+
+
+class NvidiaNimMiniMaxM3MagicPromptV1(MagicPrompt):
+  """Magic prompt v1 on MiniMax M3, via NVIDIA NIM."""
+
+  def __init__(
+    self,
+    api_key: str | None = None,
+    *,
+    timeout: float = 120.0,
+    strip_bboxes: bool = True,
+  ) -> None:
+    self.api_key = api_key
+    self.timeout = timeout
+    self.strip_bboxes = strip_bboxes
+
+  def expand(self, prompt: str, aspect_ratio: str = "1:1") -> str:
+    messages = build_messages("v1.txt", prompt, aspect_ratio)
+    caption = nvidia_nim_chat(
+      "minimaxai/minimax-m3",
+      messages,
+      self.api_key,
+      temperature=0.2,
+      extra_body={
+        "seed": 1,
+        "chat_template_kwargs": {"thinking_mode": "disabled"},
+      },
+      timeout=self.timeout,
+    )
+    return strip_aspect_ratio_and_bboxes(caption, strip_bboxes=self.strip_bboxes)
+
+
+class GpuStackMiniMaxM27MagicPromptV1(MagicPrompt):
+  """Magic prompt v1 on MiniMax M2.7, via GPUStack."""
+
+  def __init__(
+    self,
+    api_key: str | None = None,
+    *,
+    timeout: float = 120.0,
+    strip_bboxes: bool = True,
+  ) -> None:
+    self.api_key = api_key
+    self.timeout = timeout
+    self.strip_bboxes = strip_bboxes
+
+  def expand(self, prompt: str, aspect_ratio: str = "1:1") -> str:
+    messages = build_messages("v1_simple.txt", prompt, aspect_ratio)
+    caption = gpustack_chat(
+      "minimax-m2.7",
+      messages,
+      self.api_key,
+      temperature=1.0,
+      max_tokens=50000,
+      extra_body={
+        "top_p": 1,
+        "frequency_penalty": 0,
+        "presence_penalty": 0,
+      },
+      timeout=self.timeout,
+    )
+    return strip_aspect_ratio_and_bboxes(caption, strip_bboxes=self.strip_bboxes)
+
+
 class Ideogram4MagicPromptV1(MagicPrompt):
   """Magic prompt via Ideogram's hosted ideogram-v4 API.
 
@@ -354,9 +603,12 @@ class Ideogram4MagicPromptV1(MagicPrompt):
 
 
 MAGIC_PROMPTS: dict[str, type[MagicPrompt]] = {
-  "claude-sonnet-v1": ClaudeSonnetMagicPromptV1,
   "claude-opus-v1": ClaudeOpusMagicPromptV1,
+  "claude-sonnet-v1": ClaudeSonnetMagicPromptV1,
+  "gpustack-minimax-m2.7-v1": GpuStackMiniMaxM27MagicPromptV1,
   "ideogram-4-v1": Ideogram4MagicPromptV1,
+  "nemotron-3-ultra-v1": Nemotron3UltraMagicPromptV1,
+  "nim-minimax-m3-v1": NvidiaNimMiniMaxM3MagicPromptV1,
 }
 
-DEFAULT_MAGIC_PROMPT = "ideogram-4-v1"
+DEFAULT_MAGIC_PROMPT = "nim-minimax-m3-v1"
